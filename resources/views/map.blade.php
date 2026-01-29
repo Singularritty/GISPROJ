@@ -172,9 +172,35 @@
 
     let geojsonData;
     let zoneLayer;
+    let boundaryLayer;
+
+    function getColor(score) {
+        const s = Number(score) || 0;
+        if (s >= 80) return '#16a34a';
+        if (s >= 60) return '#84cc16';
+        if (s >= 40) return '#facc15';
+        if (s >= 20) return '#f97316';
+        return '#dc2626';
+    }
 
     function getSelectedCrops() {
         return Array.from(cropFilter.selectedOptions).map(o => o.value);
+    }
+
+    function renderBoundary() {
+        if (boundaryLayer) {
+            map.removeLayer(boundaryLayer);
+        }
+
+        boundaryLayer = L.geoJSON(geojsonData, {
+            filter: feature => feature.properties.type === "boundary",
+            style: {
+                color: '#000',
+                weight: 3,
+                fillOpacity: 0,
+                dashArray: '5, 5'
+            }
+        }).addTo(map);
     }
 
     function renderZones() {
@@ -190,6 +216,9 @@
 
         zoneLayer = L.geoJSON(geojsonData, {
             filter: feature => {
+                // Hanya render zones, skip boundary
+                if (feature.properties.type === "boundary") return false;
+
                 const p = feature.properties;
                 const crops = Array.isArray(p.recommended_crops) ? p.recommended_crops : [];
 
@@ -207,7 +236,8 @@
             },
 
             style: feature => ({
-                color: feature.properties.color,
+                fillColor: getColor(feature.properties.final_score),
+                color: '#333',
                 weight: 2,
                 fillOpacity: 0.6
             }),
@@ -251,11 +281,21 @@
     .then(res => res.json())
     .then(data => {
         geojsonData = data;
-
+        
+        // Render boundary terlebih dahulu
+        renderBoundary();
+        
+        // Render zones
+        renderZones();
+        map.fitBounds(L.geoJSON(data).getBounds());
+        
         const soils = new Set();
         const crops = new Set();
 
+        // Filter hanya zones untuk populate dropdown
         data.features.forEach(f => {
+            if (f.properties.type === "boundary") return;
+            
             if (f.properties.soil_type) {
                 soils.add(f.properties.soil_type);
             }
@@ -279,6 +319,9 @@
 
         renderZones();
         map.fitBounds(L.geoJSON(data).getBounds());
+
+        renderZones();
+        map.fitBounds(L.geoJSON(data).getBounds());
     });
 
     scoreFilter.addEventListener("input", () => {
@@ -291,18 +334,25 @@
     rainMaxInput.addEventListener("input", renderZones);
     cropFilter.addEventListener("change", renderZones);
 
+    const scoreRanges = [
+        { min: 80, max: 100, label: "Sangat Sesuai", color: "#16a34a" },
+        { min: 60, max: 79, label: "Sesuai", color: "#84cc16" },
+        { min: 40, max: 59, label: "Cukup Sesuai", color: "#facc15" },
+        { min: 20, max: 39, label: "Kurang Sesuai", color: "#f97316" },
+        { min: 0, max: 19, label: "Tidak Sesuai", color: "#dc2626" }
+    ];
+
     const legend = L.control({ position: "bottomright" });
 
     legend.onAdd = function () {
         const div = L.DomUtil.create("div", "legend");
-        div.innerHTML = `
-            <b>Legenda Zona</b><br>
-            <i style="background:#16a34a"></i> Sangat Sesuai<br>
-            <i style="background:#84cc16"></i> Sesuai<br>
-            <i style="background:#facc15"></i> Cukup Sesuai<br>
-            <i style="background:#f97316"></i> Kurang Sesuai<br>
-            <i style="background:#dc2626"></i> Tidak Sesuai
-        `;
+        let html = "<b>Legenda Zona (Skor)</b><br>";
+        
+        scoreRanges.forEach(range => {
+            html += `<i style="background:${range.color}"></i> ${range.label} (${range.min}-${range.max})<br>`;
+        });
+        
+        div.innerHTML = html;
         return div;
     };
 
